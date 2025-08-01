@@ -1,0 +1,159 @@
+---
+title: "Untitled"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(readxl)
+library(tidyverse)
+report <- read_excel("report.xlsx")
+View(report)
+```
+
+```{r}
+report <- report %>%
+  dplyr::select(c(
+  #"User Full Name", 
+  "Email", 
+  "Card Title", 
+  "Time Date", 
+  #"Event", 
+  #"Job Title", 
+  #"Worker Type", 
+  #"Worker Status", 
+  "Content Structure", 
+  #"Ecl Source Name", 
+  #"Is Manager?", 
+  #"Manager Name", 
+  #"Manager Email", 
+  #"Opex Function", 
+  "Business Unit Name", 
+  "Department", 
+  "TET 1", 
+  "TET 2", 
+  "TET 3", 
+  #"City", 
+  #"Country"
+))
+
+View(report)
+```
+
+```{r}
+report <- report %>% dplyr::filter(`Content Structure` != "Pathway Container") %>%
+  dplyr::filter(is.na(`Business Unit Name`) == FALSE)
+```
+
+```{r }
+report.sum1 <- report %>% 
+  group_by(`Business Unit Name`, `TET 1`, `TET 2`, `TET 3`, Email, `Time Date`) %>%
+  summarize(Card_count= n()) %>%
+  group_by(`Business Unit Name`, `TET 1`, `TET 2`, `TET 3`, Email) %>%
+  dplyr::mutate(Cum_Card_count = cumsum(Card_count),
+                Cum_Card_prop = Cum_Card_count/17)
+
+View(report.sum1)
+
+
+# Assuming your dataframe is named 'report.sum1'
+# Get unique values of `TET 1`
+unique_tet1 <- unique(report.sum1$`TET 1`)
+
+# Initialize PDF
+pdf("Cumulative_Card_Proportion_by_Business_Unit.pdf", width = 10, height = 7)
+
+# Loop over each unique `TET 1` value to create a page for each
+for (tet in unique_tet1) {
+  # Filter for the specific `TET 1` value
+  data_subset <- report.sum1 %>% filter(`TET 1` == tet)
+  
+  # Generate the plot
+  plot <- data_subset %>%
+    ggplot(aes(x = `Time Date`, y = Cum_Card_prop, group = `Email`, color = `TET 1`)) +
+    geom_line() +
+    labs(
+      title = paste("Cumulative Card Proportion by Business Unit - TET 1:", tet),
+      x = "Date",
+      y = "Cumulative Card Proportion",
+      color = "Business Unit"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1)
+    ) +
+    guides(color = "none") # Hides color legend
+  
+  # Print the plot to the PDF page
+  print(plot)
+}
+
+# Close the PDF device
+dev.off()
+
+```
+
+```{r}
+completers <- report.sum1 %>% group_by(Email) %>% 
+  slice(n()) %>%
+  dplyr::mutate(complete_80 = ifelse(Cum_Card_prop >= 0.8, 1, 0)) 
+head(completers)
+
+complete_80_summary <- completers %>%
+  group_by(`TET 1`) %>%
+  dplyr::summarize(complete_80_prop = mean(complete_80), .groups = "drop")
+
+# Create a bar chart
+ggplot(complete_80_summary, aes(x = `TET 1`, y = complete_80_prop)) +
+  geom_col() +
+  labs(
+    title = "Mean Complete_80 Proportion by TET 1",
+    x = "TET 1",
+    y = "Mean Complete_80 Proportion"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+coord_flip()
+```
+
+```{r}
+complete_80_summary.2 <- completers %>%
+  group_by(`TET 1`, `TET 2`) %>%
+  dplyr::summarize(complete_80_prop = mean(complete_80), .groups = "drop")
+
+
+unique_tet1 <- unique(complete_80_summary.2$`TET 1`)
+
+# Initialize PDF
+pdf("Mean_Complete_80_Proportion_by_TET2.pdf", width = 10, height = 7)
+
+# Loop over each unique `TET 1` value to create a plot for each
+for (tet in unique_tet1) {
+  # Filter for the specific `TET 1` value
+  data_subset <- complete_80_summary.2 %>% filter(`TET 1` == tet)
+  
+  # Generate the plot
+  plot <- ggplot(data_subset, aes(x = `TET 2`, y = complete_80_prop)) +
+    geom_col() +
+    labs(
+      title = paste("Mean Complete_80 Proportion by TET 2 - TET 1:", tet),
+      x = "TET 2",
+      y = "Mean Complete_80 Proportion"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    coord_flip()
+  
+  # Print the plot to the PDF page
+  print(plot)
+}
+
+# Close the PDF device
+dev.off()
+```
+
+
+
+
+
+
