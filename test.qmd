@@ -151,9 +151,3 @@ for (tet in unique_tet1) {
 # Close the PDF device
 dev.off()
 ```
-
-
-
-
-
-

@@ -1,0 +1,358 @@
+---
+title: "Learning Engagement Analysis Report"
+author: "Analytics Team"
+date: "`r Sys.Date()`"
+format: 
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+    geometry: margin=1in
+    fontsize: 11pt
+editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+library(readxl)
+library(tidyverse)
+library(scales)
+library(treemap)
+library(knitr)
+library(kableExtra)
+library(networkD3)
+
+# Professional theme for consistency with better PDF legibility
+theme_professional <- function() {
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5, margin = margin(b = 20)),
+    plot.subtitle = element_text(size = 14, hjust = 0.5, color = "gray40", margin = margin(b = 15)),
+    axis.title = element_text(size = 13, face = "bold"),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 13, face = "bold"),
+    legend.text = element_text(size = 12),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(20, 20, 20, 20),
+    strip.text = element_text(size = 12, face = "bold")
+  )
+}
+
+# Colorblind-friendly palette
+corporate_blue <- "#0173B2"    # Accessible blue
+corporate_orange <- "#DE8F05"  # Accessible orange  
+corporate_green <- "#029E73"   # Accessible green
+corporate_red <- "#CC78BC"     # Accessible red/pink
+corporate_yellow <- "#ECE133"  # Accessible yellow
+
+# Additional accessible colors for complex visualizations
+accessible_palette <- c("#0173B2", "#DE8F05", "#029E73", "#CC78BC", "#ECE133", "#56B4E9", "#999999")
+
+knitr::opts_chunk$set(fig.width = 12, fig.height = 9, dpi = 300)
+```
+
+# Data Loading and Processing
+
+```{r data-loading}
+# Load data
+report <- read_excel("report.xlsx")
+```
+
+```{r data-selection}
+# Select relevant columns
+report <- report %>%
+  dplyr::select(c(
+    "Email", 
+    "Card Title", 
+    "Time Date", 
+    "Content Structure", 
+    "Business Unit Name", 
+    "Department", 
+    "TET 1", 
+    "TET 2", 
+    "TET 3"
+  ))
+```
+
+```{r data-filtering}
+# Filter data
+report <- report %>% 
+  dplyr::filter(`Content Structure` != "Pathway Container") %>%
+  dplyr::filter(is.na(`Business Unit Name`) == FALSE)
+```
+
+# Analysis and Visualizations
+
+## Cumulative Card Proportion Analysis
+
+```{r cumulative-analysis}
+# Create summary with cumulative calculations
+report.sum1 <- report %>% 
+  mutate(`Time Date` = as.Date(`Time Date`)) %>%
+  group_by(`Business Unit Name`, `TET 1`, `TET 2`, `TET 3`, Email, `Time Date`) %>%
+  summarize(Card_count = n(), .groups = "drop") %>%
+  group_by(`Business Unit Name`, `TET 1`, `TET 2`, `TET 3`, Email) %>%
+  arrange(`Time Date`) %>%
+  dplyr::mutate(
+    Cum_Card_count = cumsum(Card_count),
+    Cum_Card_prop = Cum_Card_count/17
+  )
+```
+
+```{r cumulative-plots}
+# Get unique TET 1 values
+unique_tet1 <- unique(report.sum1$`TET 1`)
+
+# Create PDF with improved aesthetics
+pdf("Cumulative_Card_Proportion_by_Business_Unit.pdf", width = 12, height = 8)
+
+# Loop through each TET 1 category
+for (tet in unique_tet1) {
+  # Filter data for specific TET 1
+  data_subset <- report.sum1 %>% filter(`TET 1` == tet)
+  
+  # Create improved plot with better legibility
+  plot <- data_subset %>%
+    ggplot(aes(x = `Time Date`, y = Cum_Card_prop, group = Email)) +
+    geom_line(color = corporate_blue, alpha = 0.9, size = 1.2) +
+    geom_hline(yintercept = 0.8, linetype = "dashed", color = corporate_red, alpha = 1, size = 1.5) +
+    annotate("text", x = max(data_subset$`Time Date`, na.rm = TRUE), y = 0.82, 
+             label = "80% Target", color = corporate_red, hjust = 1, size = 5, fontface = "bold") +
+    scale_y_continuous(
+      labels = percent_format(),
+      limits = c(0, max(data_subset$Cum_Card_prop, na.rm = TRUE) * 1.05)
+    ) +
+    scale_x_date(date_labels = "%b %Y") +
+    labs(
+      title = "Cumulative Card Completion Progress",
+      subtitle = paste("TET 1 Category:", tet),
+      x = "Date",
+      y = "Cumulative Card Proportion",
+      caption = paste("Total users:", length(unique(data_subset$Email)))
+    ) +
+    theme_professional() +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+      panel.grid.major.x = element_line(color = "grey90", size = 0.5),
+      panel.grid.major.y = element_line(color = "grey90", size = 0.5)
+    )
+  
+  print(plot)
+}
+
+dev.off()
+```
+
+## Completion Rate Analysis
+
+```{r completion-analysis}
+# Calculate completers (users reaching final observation)
+completers <- report.sum1 %>% 
+  group_by(Email) %>% 
+  slice_max(`Time Date`) %>%
+  dplyr::mutate(complete_80 = ifelse(Cum_Card_prop >= 0.8, 1, 0))
+
+# Summary by TET 1
+complete_80_summary <- completers %>%
+  group_by(`TET 1`) %>%
+  dplyr::summarize(
+    total_users = n(),
+    complete_80_prop = mean(complete_80), 
+    .groups = "drop"
+  ) %>%
+  arrange(desc(complete_80_prop))
+```
+
+```{r completion-plot-tet1}
+# Create improved bar chart for TET 1 completion rates
+ggplot(complete_80_summary, aes(x = reorder(`TET 1`, complete_80_prop), y = complete_80_prop)) +
+  geom_col(fill = corporate_blue, alpha = 0.8, width = 0.7) +
+  geom_text(
+    aes(label = paste0(round(complete_80_prop * 100, 1), "%")), 
+    hjust = -0.1, size = 5, fontface = "bold", color = "white"
+  ) +
+  coord_flip() +
+  scale_y_continuous(
+    labels = percent_format(), 
+    limits = c(0, max(complete_80_summary$complete_80_prop) * 1.15),
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Completion Rate by TET 1 Category",
+    subtitle = "Percentage of users achieving 80% completion threshold",
+    x = "TET 1 Category",
+    y = "Completion Rate",
+    caption = paste("Total users analyzed:", sum(complete_80_summary$total_users))
+  ) +
+  theme_professional() +
+  theme(
+    panel.grid.major.x = element_line(color = "grey90", size = 0.5),
+    panel.grid.major.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+```
+
+## Detailed TET 2 Analysis
+
+```{r tet2-analysis}
+# Calculate completion rates by TET 1 and TET 2
+complete_80_summary.2 <- completers %>%
+  group_by(`TET 1`, `TET 2`) %>%
+  dplyr::summarize(
+    total_users = n(),
+    complete_80_prop = mean(complete_80), 
+    .groups = "drop"
+  )
+
+# Get unique TET 1 values for plotting
+unique_tet1_tet2 <- unique(complete_80_summary.2$`TET 1`)
+```
+
+```{r tet2-plots}
+# Create PDF for TET 2 analysis with improved aesthetics
+pdf("Mean_Complete_80_Proportion_by_TET2.pdf", width = 12, height = 8)
+
+# Loop through each TET 1 category
+for (tet in unique_tet1_tet2) {
+  # Filter for specific TET 1
+  data_subset <- complete_80_summary.2 %>% filter(`TET 1` == tet)
+  
+  # Create improved plot
+  plot <- ggplot(data_subset, aes(x = reorder(`TET 2`, complete_80_prop), y = complete_80_prop)) +
+    geom_col(fill = corporate_orange, alpha = 0.8, width = 0.7) +
+    geom_text(
+      aes(label = paste0(round(complete_80_prop * 100, 1), "%")), 
+      hjust = -0.1, size = 5, fontface = "bold", color = "white"
+    ) +
+    coord_flip() +
+    scale_y_continuous(
+      labels = percent_format(),
+      limits = c(0, max(data_subset$complete_80_prop, na.rm = TRUE) * 1.15),
+      expand = c(0, 0)
+    ) +
+    labs(
+      title = "Completion Rate by TET 2 Subcategory",
+      subtitle = paste("TET 1 Category:", tet),
+      x = "TET 2 Subcategory",
+      y = "Completion Rate",
+      caption = paste("Total users:", sum(data_subset$total_users))
+    ) +
+    theme_professional() +
+    theme(
+      panel.grid.major.x = element_line(color = "grey90", size = 0.5),
+      panel.grid.major.y = element_blank(),
+      axis.ticks.y = element_blank()
+    )
+  
+  print(plot)
+}
+
+dev.off()
+```
+
+## Hierarchical TET Analysis
+
+### TET Hierarchy Summary Table
+
+```{r hierarchical-summary}
+# Create comprehensive hierarchy summary
+tet_hierarchy <- completers %>%
+  group_by(`TET 1`, `TET 2`, `TET 3`) %>%
+  summarize(
+    total_users = n(),
+    completed_users = sum(complete_80),
+    completion_rate = mean(complete_80),
+    avg_proportion = mean(Cum_Card_prop),
+    .groups = "drop"
+  ) %>%
+  arrange(`TET 1`, `TET 2`, `TET 3`) %>%
+  mutate(
+    completion_pct = paste0(round(completion_rate * 100, 1), "%"),
+    avg_prop_pct = paste0(round(avg_proportion * 100, 1), "%")
+  )
+
+# Display hierarchical table
+kable(tet_hierarchy %>% 
+        select(`TET 1`, `TET 2`, `TET 3`, total_users, completion_pct, avg_prop_pct),
+      col.names = c("TET 1", "TET 2", "TET 3", "Users", "80% Completion", "Avg Completion"),
+      caption = "Hierarchical TET Performance Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                font_size = 9,
+                latex_options = c("scale_down", "hold_position")) %>%
+  column_spec(1:3, width = "4cm") %>%
+  column_spec(4, width = "1.5cm") %>%
+  column_spec(5:6, width = "2cm") %>%
+  pack_rows(index = table(tet_hierarchy$`TET 1`)) %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(5:6, color = ifelse(tet_hierarchy$completion_rate >= 0.8, "green", 
+                                 ifelse(tet_hierarchy$completion_rate >= 0.6, "orange", "red")))
+```
+
+```{r}
+# Select the relevant columns
+data_to_save <- tet_hierarchy %>%
+  select(`TET 1`, `TET 2`, `TET 3`, total_users, completion_pct, avg_prop_pct)
+
+# Rename the columns as desired
+colnames(data_to_save) <- c("TET 1", "TET 2", "TET 3", "Users", "80% Completion", "Avg Completion")
+
+# Save the selected data as a .csv file (e.g., "tet_hierarchy_summary.csv")
+write.csv(data_to_save, "tet_hierarchy_summary.csv", row.names = FALSE)
+```
+
+
+### TET Hierarchy Bubble Chart
+
+```{r bubble-chart-analysis}
+library(ggforce)
+
+# Calculate the number of pages
+num_pages <- n_pages(
+  ggplot(bubble_data, aes(x = `TET 2`, y = `TET 3`)) +
+    facet_wrap_paginate(~`TET 1`, scales = "free", ncol = 1, nrow = 1)
+)
+
+# Open a PDF file
+pdf("TET_Performance_Paginated.pdf", width = 14, height = 10)
+
+# Loop through all the pages and save them in the PDF
+for (i in 1:num_pages) {
+  g <- ggplot(bubble_data, aes(x = `TET 2`, y = `TET 3`)) +
+    geom_point(aes(size = total_users, color = completion_rate), alpha = 0.8) +
+    scale_size_continuous(name = "Users", range = c(5, 20)) +
+    scale_color_gradient2(
+      low = corporate_red, mid = corporate_yellow, high = corporate_blue,
+      midpoint = 0.6, labels = scales::percent_format(),
+      name = "Completion\nRate"
+    ) +
+    ggforce::facet_wrap_paginate(~`TET 1`, scales = "free", ncol = 1, nrow = 1, page = i) +
+    labs(
+      title = "TET Hierarchy Performance Bubble Chart (Page {i})",
+      subtitle = "Bubble size = number of users, color = completion rate",
+      x = "TET 2 Categories",
+      y = "TET 3 Categories"
+    ) +
+    theme_professional() +
+    theme(
+      axis.text.x = element_text(angle = 15, hjust = 1, size = 11),
+      axis.text.y = element_text(size = 11),
+      legend.position = "right",
+      panel.spacing = unit(1, "lines")
+    )
+  
+  # Print the current page of the plot
+  print(g)
+}
+
+# Close the PDF device
+dev.off()
+
+# Completion Message
+cat("PDF with paginated charts has been created as 'TET_Performance_Paginated.pdf'.\n")
+
+```
+

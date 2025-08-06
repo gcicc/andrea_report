@@ -1,0 +1,346 @@
+---
+title: "Learning Engagement Analysis Report"
+subtitle: "Card Completion and Progress Tracking Analysis"
+author: "Analytics Team"
+date: "`r Sys.Date()`"
+format: 
+  pdf:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    colorlinks: true
+    geometry: margin=1in
+    fontsize: 11pt
+editor: visual
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+# Load required libraries
+library(readxl)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(lubridate)
+library(tidytext)
+
+# Set global options
+options(digits = 3)
+knitr::opts_chunk$set(fig.width = 10, fig.height = 6, dpi = 300)
+
+# Define corporate color palette
+corporate_colors <- c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b")
+
+# Custom theme for consistency
+theme_professional <- function() {
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, color = "gray60"),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    plot.caption = element_text(size = 9, color = "gray60", hjust = 0)
+  )
+}
+```
+
+# Executive Summary
+
+This report analyzes learning engagement data to understand card completion patterns across different business units and organizational structures. Key findings include completion rates, progress tracking, and performance metrics across TET (Training Engagement Taxonomy) levels.
+
+## Key Findings
+
+-   Analysis covers learning card completion data across multiple business units
+-   Completion threshold set at 80% for performance measurement
+-   Progress tracking shows cumulative engagement over time
+-   Performance varies significantly across TET 1 and TET 2 categories
+
+------------------------------------------------------------------------
+
+# Data Processing and Validation
+
+```{r data-loading}
+# Load and validate data
+tryCatch({
+  report_raw <- read_excel("report.xlsx")
+  cat("✓ Data loaded successfully:", nrow(report_raw), "records\n")
+}, error = function(e) {
+  stop("Error loading Excel file: ", e$message)
+})
+
+# Data validation
+if(nrow(report_raw) == 0) {
+  stop("Error: No data found in the Excel file")
+}
+
+# Display data structure
+cat("Data dimensions:", dim(report_raw), "\n")
+cat("Available columns:", ncol(report_raw), "\n")
+```
+
+```{r data-cleaning}
+# Define completion threshold as a global variable
+completion_threshold <- 0.8
+
+# Calculate total cards for proportion calculations
+total_cards <- report_raw %>% 
+  filter(`Content Structure` != "Pathway Container") %>%
+  filter(!is.na(`Business Unit Name`)) %>%
+  nrow()
+
+cat("Total cards for analysis:", total_cards, "\n")
+
+# Select and clean relevant columns
+report_clean <- report_raw %>%
+  select(
+    Email = "Email",
+    Card_Title = "Card Title",
+    Time_Date = "Time Date",
+    Content_Structure = "Content Structure",
+    Business_Unit = "Business Unit Name",
+    Department = "Department",
+    TET_1 = "TET 1",
+    TET_2 = "TET 2",
+    TET_3 = "TET 3"
+  ) %>%
+  filter(Content_Structure != "Pathway Container") %>%
+  filter(!is.na(Business_Unit)) %>%
+  mutate(
+    Time_Date = as.Date(Time_Date)
+  )
+
+# Data quality summary
+data_quality <- report_clean %>%
+  summarise(
+    total_records = n(),
+    unique_users = n_distinct(Email),
+    unique_business_units = n_distinct(Business_Unit),
+    date_range = paste(min(Time_Date, na.rm = TRUE), "to", max(Time_Date, na.rm = TRUE)),
+    missing_dates = sum(is.na(Time_Date))
+  )
+
+kable(data_quality, 
+      caption = "Data Quality Summary",
+      col.names = c("Total Records", "Unique Users", "Business Units", "Date Range", "Missing Dates")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+------------------------------------------------------------------------
+
+# Analysis Results
+
+## Card Completion Progress Analysis
+
+```{r progress-analysis}
+# Create comprehensive progress summary
+progress_summary <- report_clean %>%
+  group_by(Business_Unit, TET_1, TET_2, TET_3, Email, Time_Date) %>%
+  summarise(card_count = n(), .groups = "drop") %>%
+  group_by(Business_Unit, TET_1, TET_2, TET_3, Email) %>%
+  arrange(Time_Date) %>%
+  mutate(
+    cumulative_cards = cumsum(card_count),
+    cumulative_proportion = cumulative_cards / total_cards,
+    completion_80_achieved = cumulative_proportion >= completion_threshold
+  ) %>%
+  ungroup()
+
+# Summary statistics
+summary_stats <- progress_summary %>%
+  group_by(Email) %>%
+  slice_max(Time_Date) %>%
+  summarise(
+    final_completion_rate = max(cumulative_proportion),
+    achieved_80_percent = any(completion_80_achieved),
+    total_days_active = n_distinct(Time_Date),
+    .groups = "drop"
+  )
+
+overall_stats <- summary_stats %>%
+  summarise(
+    total_users = n(),
+    avg_completion_rate = mean(final_completion_rate),
+    users_80_percent = sum(achieved_80_percent),
+    percent_80_achievers = mean(achieved_80_percent) * 100,
+    avg_active_days = mean(total_days_active)
+  )
+
+kable(overall_stats,
+      caption = "Overall Performance Metrics",
+      col.names = c("Total Users", "Avg Completion Rate", "Users ≥80%", "% Achieving 80%", "Avg Active Days"),
+      digits = c(0, 3, 0, 1, 1)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Completion Analysis by TET 1 Categories
+
+```{r tet1-analysis}
+# Calculate completion rates by TET 1
+tet1_completion <- progress_summary %>%
+  group_by(Email, TET_1) %>%
+  slice_max(Time_Date) %>%
+  mutate(completed_80 = cumulative_proportion >= completion_threshold) %>%
+  group_by(TET_1) %>%
+  summarise(
+    total_users = n(),
+    completed_80_count = sum(completed_80),
+    completion_80_rate = mean(completed_80),
+    avg_completion_rate = mean(cumulative_proportion),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(completion_80_rate))
+
+kable(tet1_completion,
+      caption = "Completion Rates by TET 1 Category",
+      col.names = c("TET 1 Category", "Total Users", "Users ≥80%", "80% Completion Rate", "Avg Completion Rate"),
+      digits = c(0, 0, 0, 3, 3)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r tet1-visualization}
+# Professional bar chart for TET 1 completion rates
+ggplot(tet1_completion, aes(x = reorder(TET_1, completion_80_rate), y = completion_80_rate)) +
+  geom_col(fill = corporate_colors[1], alpha = 0.8, width = 0.7) +
+  geom_text(aes(label = scales::percent(completion_80_rate, accuracy = 0.1)), 
+            hjust = -0.1, size = 3.5, fontface = "bold") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(), 
+                     limits = c(0, max(tet1_completion$completion_80_rate) * 1.1)) +
+  labs(
+    title = "Completion Rate Analysis by TET 1 Category",
+    subtitle = "Percentage of users achieving 80% completion threshold",
+    x = "TET 1 Category",
+    y = "Completion Rate (%)",
+    caption = paste("Total users analyzed:", sum(tet1_completion$total_users))
+  ) +
+  theme_professional()
+```
+
+## Progress Tracking Over Time
+
+```{r progress-visualization}
+# Create time series visualization for top performing TET 1 categories
+top_tet1 <- tet1_completion %>%
+  top_n(5, completion_80_rate) %>%
+  pull(TET_1)
+
+progress_viz_data <- progress_summary %>%
+  filter(TET_1 %in% top_tet1) %>%
+  group_by(TET_1, Time_Date) %>%
+  summarise(
+    avg_cumulative_proportion = mean(cumulative_proportion),
+    user_count = n(),
+    .groups = "drop"
+  )
+
+ggplot(progress_viz_data, aes(x = Time_Date, y = avg_cumulative_proportion, color = TET_1)) +
+  geom_line(size = 1.2, alpha = 0.8) +
+  geom_hline(yintercept = 0.8, linetype = "dashed", color = "red", alpha = 0.7) +
+  annotate("text", x = max(progress_viz_data$Time_Date), y = 0.82, 
+           label = "80% Threshold", color = "red", size = 3) +
+  scale_color_manual(values = corporate_colors[1:length(top_tet1)]) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +
+  labs(
+    title = "Learning Progress Over Time",
+    subtitle = "Average cumulative completion rates for top-performing TET 1 categories",
+    x = "Date",
+    y = "Average Cumulative Completion Rate",
+    color = "TET 1 Category",
+    caption = "Red dashed line indicates 80% completion threshold"
+  ) +
+  theme_professional() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+## Detailed Analysis by TET 2 Subcategories
+
+```{r tet2-analysis}
+# Calculate completion rates by TET 1 and TET 2
+tet2_completion <- progress_summary %>%
+  group_by(Email, TET_1, TET_2) %>%
+  slice_max(Time_Date) %>%
+  mutate(completed_80 = cumulative_proportion >= completion_threshold) %>%
+  group_by(TET_1, TET_2) %>%
+  summarise(
+    total_users = n(),
+    completion_80_rate = mean(completed_80),
+    avg_completion_rate = mean(cumulative_proportion),
+    .groups = "drop"
+  ) %>%
+  arrange(TET_1, desc(completion_80_rate))
+
+# Create faceted visualization for TET 2 analysis
+ggplot(tet2_completion, aes(x = reorder_within(TET_2, completion_80_rate, TET_1), 
+                           y = completion_80_rate)) +
+  geom_col(fill = corporate_colors[2], alpha = 0.8) +
+  coord_flip() +
+  scale_x_reordered() +
+  scale_y_continuous(labels = scales::percent_format()) +
+  facet_wrap(~TET_1, scales = "free_y", ncol = 2) +
+  labs(
+    title = "TET 2 Completion Rates by TET 1 Category",
+    subtitle = "Percentage of users achieving 80% completion threshold",
+    x = "TET 2 Subcategory",
+    y = "Completion Rate (%)"
+  ) +
+  theme_professional() +
+  theme(strip.text = element_text(face = "bold"))
+```
+
+------------------------------------------------------------------------
+
+# Recommendations
+
+Based on the analysis results:
+
+## Performance Improvement Areas
+
+1.  **Focus on underperforming TET 1 categories** with completion rates below 60%
+2.  **Implement targeted interventions** for TET 2 subcategories showing low engagement
+3.  **Develop mentorship programs** for users struggling to reach the 80% threshold
+
+## Data Collection Enhancements
+
+1.  **Track user engagement metrics** beyond card completion
+2.  **Implement real-time progress monitoring** dashboards
+3.  **Collect user feedback** to understand completion barriers
+
+## Reporting Improvements
+
+1.  **Establish monthly reporting** cycles for continuous monitoring
+2.  **Create automated alerts** for users falling behind completion targets
+3.  **Develop predictive models** to identify at-risk users early
+
+------------------------------------------------------------------------
+
+# Appendix
+
+## Technical Notes
+
+-   Analysis based on `r nrow(report_clean)` learning records
+-   Completion threshold set at `r scales::percent(completion_threshold)`
+-   Data covers period from `r min(report_clean$Time_Date, na.rm = TRUE)` to `r max(report_clean$Time_Date, na.rm = TRUE)`
+
+## Data Dictionary
+
+-   **TET 1**: Primary training engagement taxonomy level
+-   **TET 2**: Secondary training engagement taxonomy level
+-   **TET 3**: Tertiary training engagement taxonomy level
+-   **Cumulative Proportion**: Running total of completed cards divided by total available cards
+-   **Completion Rate**: Percentage of users achieving 80% completion threshold
+
+------------------------------------------------------------------------
+
+*Report generated on `r Sys.Date()` using R and Quarto*
